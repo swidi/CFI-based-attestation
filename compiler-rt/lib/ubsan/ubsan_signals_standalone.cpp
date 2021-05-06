@@ -26,6 +26,7 @@
 // debuggerd handler, but before the ART handler.
 // * Interceptors don't work at all when ubsan runtime is loaded late, ex. when
 // it is part of an APK that does not use wrap.sh method.
+//
 #if SANITIZER_FUCHSIA || SANITIZER_ANDROID
 
 namespace __ubsan {
@@ -63,6 +64,7 @@ void InitializeDeadlySignals() {
   InitializeSignalInterceptors();
   InstallDeadlySignalHandlers(&UBsanOnDeadlySignal);
 }
+
 
 } // namespace __ubsan
 

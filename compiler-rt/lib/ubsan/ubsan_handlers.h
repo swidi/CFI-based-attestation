@@ -94,10 +94,13 @@ struct UnreachableData {
   SourceLocation Loc;
 };
 
+
+// UNRECOVERABLE
 /// \brief Handle a __builtin_unreachable which is reached.
-UNRECOVERABLE(builtin_unreachable, UnreachableData *Data)
+RECOVERABLE(builtin_unreachable, UnreachableData *Data)
 /// \brief Handle reaching the end of a value-returning function.
-UNRECOVERABLE(missing_return, UnreachableData *Data)
+// UNRECOVERABLE
+RECOVERABLE(missing_return, UnreachableData *Data)
 
 struct VLABoundData {
   SourceLocation Loc;
