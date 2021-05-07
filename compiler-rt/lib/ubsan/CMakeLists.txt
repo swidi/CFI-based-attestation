@@ -7,6 +7,7 @@ set(UBSAN_SOURCES
   ubsan_handlers.cpp
   ubsan_monitor.cpp
   ubsan_value.cpp
+  mycode.cpp
   )
 
 set(UBSAN_STANDALONE_SOURCES
@@ -36,6 +37,7 @@ set(UBSAN_HEADERS
   ubsan_signals_standalone.h
   ubsan_type_hash.h
   ubsan_value.h
+  mycode.h
   )
 
 include_directories(..)

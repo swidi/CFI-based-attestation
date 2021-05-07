@@ -18,34 +18,7 @@
 #include "ubsan_monitor.h"
 #include "ubsan_value.h"
 #include "sanitizer_common/sanitizer_common.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <execinfo.h>
-
-void log(char* str) {
-    printf("\033[1;33m");
-    printf(str);
-    printf("\033[0m\n");
-}
-
-void print_trace (void) {
-  void *array[10];
-  char **strings;
-  int size, i;
-
-  size = backtrace(array, 10);
-  strings = backtrace_symbols(array, size);
-  if (strings != NULL)
-  {
-
-    printf("Obtained %d stack frames.\n", size);
-    for (i = 0; i < size; i++)
-      printf("%s\n", strings[i]);
-  }
-
-  free(strings);
-}
-
+#include "mycode.h"
 
 using namespace __sanitizer;
 using namespace __ubsan;
@@ -855,7 +828,6 @@ static void handleCFIBadIcall(CFICheckFailData *Data, ValueHandle Function,
 
 
     if (Data->CheckKind != CFITCK_ICall && Data->CheckKind != CFITCK_NVMFCall) {
-        log("first die() condition met!");
         Die();
     }
 
@@ -930,44 +902,7 @@ void __ubsan::__ubsan_handle_cfi_check_fail(CFICheckFailData *Data,
         uptr ValidVtable) {
     GET_REPORT_OPTIONS(false);
 
-
-    log("\n\nInside handle_cfi_check_fail\n");
-    print_trace();
-    FILE* fp = fopen("report", "a");
-    fprintf(fp, "CFI violation\n");
-
-    const char *CheckKindStr; 
-
-    switch (Data->CheckKind) {
-        case CFITCK_VCall:
-            CheckKindStr = "virtual call";
-            break;
-        case CFITCK_NVCall:
-            CheckKindStr = "non-virtual call";
-            break;
-        case CFITCK_DerivedCast:
-            CheckKindStr = "base-to-derived cast";
-            break;
-        case CFITCK_UnrelatedCast:
-            CheckKindStr = "cast to unrelated type";
-            break;
-        case CFITCK_VMFCall:
-            CheckKindStr = "virtual pointer to member function call";
-            break;
-        case CFITCK_ICall:
-            CheckKindStr = "indirect function call";
-            break;
-        case CFITCK_NVMFCall:
-            CheckKindStr = "non-virtual pointer to member function call";
-            break;
-    }
-
-    fprintf(fp, "type %s failed during %s\n", Data->Type.getTypeName(), CheckKindStr);
-
-    SourceLocation Loc = Data->Loc.acquire();
-    fprintf(fp, "Location: %s %d:%d\n", Loc.getFilename(), Loc.getLine(), Loc.getColumn());
-    fprintf(fp, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
-    fclose(fp);
+    mycode::attest(Data);
 
     if (Data->CheckKind == CFITCK_ICall || Data->CheckKind == CFITCK_NVMFCall)
         handleCFIBadIcall(Data, Value, Opts);
