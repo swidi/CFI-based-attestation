@@ -1,7 +1,10 @@
 #include "mycode.h"
 #define PRINTTOFILE 0
+#define LOG printf
 
-void print_cfi_kind(std::ostream& out, CFICheckFailData *Data) {
+pid_t perf_pid;
+
+void print_cfi_kind(CFICheckFailData *Data) {
     const char *CheckKindStr; 
 
     switch (Data->CheckKind) {
@@ -28,49 +31,94 @@ void print_cfi_kind(std::ostream& out, CFICheckFailData *Data) {
             break;
     }
 
-    out << "type " << Data->Type.getTypeName() << " failed during " << CheckKindStr << std::endl;
+    LOG("type %s failed during %s\n", Data->Type.getTypeName(), CheckKindStr);
 
     SourceLocation Loc = Data->Loc.acquire();
-    out << "Location: " << Loc.getFilename() << " " << Loc.getLine() << ":" << Loc.getColumn() << std::endl;
+    LOG("Location: %s %d:%d\n", Loc.getFilename(), Loc.getLine(), Loc.getColumn());
 }
 
-void print_trace(std::ostream& out) {
+void print_trace() {
     void *array[10];
     char **strings;
     int size, i;
 
     size = backtrace(array, 10);
     strings = backtrace_symbols(array, size);
+    LOG("libc stack trace:\n");
     if (strings != NULL)
     {
 
-        out << "Obtained " << size << "stack frames." << std::endl;
+        LOG("Obtained %d stack frames\n", size);
         for (i = 0; i < size; i++)
-            out << strings[i] << std::endl;
+            LOG(strings[i]);
+        LOG("\n");
     }
 
     free(strings);
 }
 
-void mycode::attest(CFICheckFailData *Data){
-    std::ostream& out;
-#ifdef PRINTTOFILE
-    std::ofstream outfile;
-    outfile.open("report", std::ios::app);
-    out = outfile;
-#else
-    out = std::cout
-    out << "\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m" << std:endl;
-#endif
+void dump_core() {
+    pid_t fork_id = fork();
+    LOG("Dumping core using gcore\n");
 
-    out << "CFI violation" << std::endl;
+    if (fork_id == -1) {
+        LOG("Error during core dump: cannot fork\n");
+        return;
+    } if (fork_id == 0) {
+        LOG("Gcore fork PID: %d\n", getpid());
 
-    out << "libc stack trace:" << std::endl;
-    print_trace(fp);
-    out << "----------------------------------------" << std::endl;
+        char* gcore_string;
+        asprintf(&gcore_string, "/usr/bin/gcore %d", getpid());
 
+        int ret = system(gcore_string);
+        if(ret != 0)
+            LOG("Error during core dump: gcore exit status %d\n", ret);
 
-#ifndef PRINTTOFILE
-    out << "\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m" << std::endl;
-#endif
+        exit(0);
+    }
 }
+
+void perf() {
+    LOG("Signalling perf (PID %d) to create snapshot\n", perf_pid);
+
+    kill(perf_pid, SIGUSR2);
+}
+
+void mycode::attest(CFICheckFailData *Data){
+    LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
+
+    LOG("CFI violation\n");
+    perf();
+    print_trace();
+    dump_core();
+
+    LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
+}
+
+void __attribute__ ((constructor)) premain()
+{
+    printf("In premain()\n");
+    LOG("Original pid: %d\n", getpid());
+    char* pid_string;
+    asprintf(&pid_string, "%d", getpid());
+
+    perf_pid = fork();
+
+    if (perf_pid == -1) {
+        LOG("Error during perf record: cannot fork\n");
+        return;
+    } if (perf_pid == 0) {
+        LOG("Executing %s from child process %d\n", "perf", getpid());
+
+
+        int ret = execl("/usr/bin/perf", "perf", "record", "-v", "-e", "intel_pt//u", "-S", "--switch-output=signal", "-p",pid_string, (char *) NULL);
+        if(ret != 0)
+            LOG("Error during perf record: %d\n", ret);
+
+        exit(0);
+    }
+    else {
+        sleep(5);
+    }
+}
+

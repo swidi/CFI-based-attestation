@@ -5,6 +5,9 @@
 #include "ubsan_handlers.h"
 // libc backtrace
 #include <execinfo.h>
+// fork, getpid()
+#include <unistd.h>
+#include <signal.h>
 
 using namespace __sanitizer;
 using namespace __ubsan;
