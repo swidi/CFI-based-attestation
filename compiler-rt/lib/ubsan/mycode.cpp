@@ -1,6 +1,7 @@
 #include "mycode.h"
 #define PRINTTOFILE 0
 #define LOG printf
+#define FORK_GCORE 0
 
 pid_t perf_pid;
 
@@ -58,14 +59,19 @@ void print_trace() {
 }
 
 void dump_core() {
+#if FORK_GCORE
     pid_t fork_id = fork();
+#endif
+
     LOG("Dumping core using gcore\n");
 
+#if FORK_GCORE
     if (fork_id == -1) {
         LOG("Error during core dump: cannot fork\n");
         return;
     } if (fork_id == 0) {
         LOG("Gcore fork PID: %d\n", getpid());
+#endif
 
         char* gcore_string;
         asprintf(&gcore_string, "/usr/bin/gcore %d", getpid());
@@ -74,8 +80,10 @@ void dump_core() {
         if(ret != 0)
             LOG("Error during core dump: gcore exit status %d\n", ret);
 
+#if FORK_GCORE
         exit(0);
     }
+#endif
 }
 
 void perf() {
@@ -102,6 +110,14 @@ void __attribute__ ((constructor)) premain()
     char* pid_string;
     asprintf(&pid_string, "%d", getpid());
 
+    /*
+    // create pipe to read from perf's stdout
+    int filedes[2];
+    if (pipe(filedes) == -1) {
+        perror("pipe");
+        exit(1);
+    }
+*/
     perf_pid = fork();
 
     if (perf_pid == -1) {
@@ -110,14 +126,40 @@ void __attribute__ ((constructor)) premain()
     } if (perf_pid == 0) {
         LOG("Executing %s from child process %d\n", "perf", getpid());
 
-
-        int ret = execl("/usr/bin/perf", "perf", "record", "-v", "-e", "intel_pt//u", "-S", "--switch-output=signal", "-p",pid_string, (char *) NULL);
+        /*
+        // reroute stdout to pipe
+        while ((dup2(filedes[1], STDOUT_FILENO) == -1) && (errno == EINTR)) {}
+        close(filedes[1]);
+        close(filedes[0]);
+*/
+        int ret = execl("/usr/bin/perf", "perf", "record", "-v", "-e", "intel_pt//u", "-S", "--switch-output=signal", "-p", pid_string, (char *) NULL);
         if(ret != 0)
             LOG("Error during perf record: %d\n", ret);
 
         exit(0);
     }
     else {
+        /*
+        close(filedes[1]);
+        char buffer[4096];
+        while (1) {
+            ssize_t count = read(filedes[0], buffer, sizeof(buffer));
+            if (count == -1) {
+                if (errno == EINTR) {
+                    continue;
+                } else {
+                    perror("read");
+                    exit(1);
+                }
+            } else if (count == 0) {
+                break;
+            } else {
+                handle_child_process_output(buffer, count);
+            }
+        }
+        close(filedes[0]);
+        wait(0);
+        */
         sleep(5);
     }
 }
