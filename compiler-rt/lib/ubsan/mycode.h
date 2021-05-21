@@ -8,6 +8,12 @@
 // fork, getpid()
 #include <unistd.h>
 #include <signal.h>
+// inotify
+#include <errno.h>
+#include <poll.h>
+#include <sys/inotify.h>
+#include <string.h>
+#include <limits.h>
 
 using namespace __sanitizer;
 using namespace __ubsan;

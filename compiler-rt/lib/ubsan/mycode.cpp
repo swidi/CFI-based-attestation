@@ -103,6 +103,70 @@ void mycode::attest(CFICheckFailData *Data){
     LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
 }
 
+static int handle_events(int fd, int wd) {
+    /* Some systems cannot read integer variables if they are not
+       properly aligned. On other systems, incorrect alignment may
+       decrease performance. Hence, the buffer used for reading from
+       the inotify file descriptor should have the same alignment as
+       struct inotify_event. */
+
+    char buf[4096]
+        __attribute__ ((aligned(__alignof__(struct inotify_event))));
+    const struct inotify_event *event;
+    ssize_t len;
+
+    /* Loop while events can be read from inotify file descriptor. */
+
+    for (;;) {
+
+        /* Read some events. */
+
+        len = read(fd, buf, sizeof(buf));
+        if (len == -1 && errno != EAGAIN) {
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
+
+        /* If the nonblocking read() found no events to read, then
+           it returns -1 with errno set to EAGAIN. In that case,
+           we exit the loop. */
+
+        if (len <= 0)
+            break;
+
+        /* Loop over all events in the buffer. */
+        int ret = 0;
+        for (char *ptr = buf; ptr < buf + len;
+                ptr += sizeof(struct inotify_event) + event->len) {
+
+            event = (const struct inotify_event *) ptr;
+
+            /* Print event type. */
+
+            if (event->mask & IN_OPEN)
+                printf("IN_OPEN: ");
+            if (event->mask & IN_CLOSE_NOWRITE)
+                printf("IN_CLOSE_NOWRITE: ");
+            if (event->mask & IN_CLOSE_WRITE) {
+                printf("IN_CLOSE_WRITE: ");
+            }
+            if (event->mask & IN_MOVE_SELF)
+                printf("IN_MOVE_SELF: ");
+
+            /* Print the name of the file. */
+
+            if (event->len)
+                printf("%s\n", event->name);
+
+            if(strstr(event->name, "perf.data") != NULL && event->mask & IN_OPEN) {
+                printf("perf.data has been opened ~~~~~~~~~~~~~~~~~~\n");
+                ret = 1;
+            }
+        }
+        return ret;
+    }
+}
+
 void __attribute__ ((constructor)) premain()
 {
     printf("In premain()\n");
@@ -110,28 +174,59 @@ void __attribute__ ((constructor)) premain()
     char* pid_string;
     asprintf(&pid_string, "%d", getpid());
 
-    /*
-    // create pipe to read from perf's stdout
-    int filedes[2];
-    if (pipe(filedes) == -1) {
-        perror("pipe");
-        exit(1);
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        printf("Current working dir: %s\n", cwd);
+    } else {
+        perror("getcwd() error");
+        exit(EXIT_FAILURE);
     }
-*/
+
+    char buf;
+    int fd, i, poll_num;
+    int wd;
+    nfds_t nfds;
+    struct pollfd fds[2];
+
+    /* Create the file descriptor for accessing the inotify API. */
+
+    fd = inotify_init1(IN_NONBLOCK);
+    if (fd == -1) {
+        perror("inotify_init1");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Mark directories for events
+       - file was opened
+       - file was closed
+       - file was moved*/
+
+    wd = inotify_add_watch(fd, cwd,
+            IN_OPEN | IN_CLOSE | IN_MOVE_SELF);
+    if (wd == -1) {
+        fprintf(stderr, "Cannot watch '%s': %s\n", cwd, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    /* Prepare for polling. */
+
+    nfds = 2;
+
+    fds[0].fd = STDIN_FILENO;       /* Console input */
+    fds[0].events = POLLIN;
+
+    fds[1].fd = fd;                 /* Inotify input */
+    fds[1].events = POLLIN;
+
+
     perf_pid = fork();
 
     if (perf_pid == -1) {
         LOG("Error during perf record: cannot fork\n");
-        return;
+        exit(EXIT_FAILURE);
     } if (perf_pid == 0) {
         LOG("Executing %s from child process %d\n", "perf", getpid());
 
-        /*
-        // reroute stdout to pipe
-        while ((dup2(filedes[1], STDOUT_FILENO) == -1) && (errno == EINTR)) {}
-        close(filedes[1]);
-        close(filedes[0]);
-*/
         int ret = execl("/usr/bin/perf", "perf", "record", "-v", "-e", "intel_pt//u", "-S", "--switch-output=signal", "-p", pid_string, (char *) NULL);
         if(ret != 0)
             LOG("Error during perf record: %d\n", ret);
@@ -139,28 +234,31 @@ void __attribute__ ((constructor)) premain()
         exit(0);
     }
     else {
-        /*
-        close(filedes[1]);
-        char buffer[4096];
+        /* Wait for events and/or terminal input. */
+
+        printf("Listening for events.\n");
         while (1) {
-            ssize_t count = read(filedes[0], buffer, sizeof(buffer));
-            if (count == -1) {
-                if (errno == EINTR) {
+            poll_num = poll(fds, nfds, -1);
+            if (poll_num == -1) {
+                if (errno == EINTR)
                     continue;
-                } else {
-                    perror("read");
-                    exit(1);
+                perror("poll");
+                exit(EXIT_FAILURE);
+            }
+
+            if (poll_num > 0) {
+                if (fds[1].revents & POLLIN) {
+                    /* Inotify events are available. */
+                    if(handle_events(fd, wd))
+                        break;
                 }
-            } else if (count == 0) {
-                break;
-            } else {
-                handle_child_process_output(buffer, count);
             }
         }
-        close(filedes[0]);
-        wait(0);
-        */
-        sleep(5);
+
+        printf("Listening for events stopped.\n");
+
+        /* Close inotify file descriptor. */
+        close(fd);
     }
 }
 
