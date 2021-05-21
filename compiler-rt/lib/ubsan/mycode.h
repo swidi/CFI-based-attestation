@@ -17,6 +17,8 @@
 
 using namespace __sanitizer;
 using namespace __ubsan;
+
+
 namespace mycode {
     void attest(CFICheckFailData *Data);
 }

@@ -1,9 +1,11 @@
 #include "mycode.h"
 #define PRINTTOFILE 0
 #define LOG printf
-#define FORK_GCORE 0
+#define FORK_GCORE 1
 
 pid_t perf_pid;
+int wd, inotify_fd;
+struct pollfd poll_fd[1];
 
 void print_cfi_kind(CFICheckFailData *Data) {
     const char *CheckKindStr; 
@@ -86,23 +88,6 @@ void dump_core() {
 #endif
 }
 
-void perf() {
-    LOG("Signalling perf (PID %d) to create snapshot\n", perf_pid);
-
-    kill(perf_pid, SIGUSR2);
-}
-
-void mycode::attest(CFICheckFailData *Data){
-    LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
-
-    LOG("CFI violation\n");
-    perf();
-    print_trace();
-    dump_core();
-
-    LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
-}
-
 static int handle_events(int fd, int wd) {
     /* Some systems cannot read integer variables if they are not
        properly aligned. On other systems, incorrect alignment may
@@ -167,13 +152,54 @@ static int handle_events(int fd, int wd) {
     }
 }
 
-void __attribute__ ((constructor)) premain()
-{
-    printf("In premain()\n");
-    LOG("Original pid: %d\n", getpid());
-    char* pid_string;
-    asprintf(&pid_string, "%d", getpid());
+void wait_for_inotify_event() {
+    int poll_num;
+    printf("Listening for events.\n");
+    while (1) {
+        poll_num = poll(poll_fd, 1, -1);
+        if (poll_num == -1) {
+            if (errno == EINTR)
+                continue;
+            perror("poll");
+            exit(EXIT_FAILURE);
+        }
 
+        if (poll_num > 0) {
+            if (poll_fd[0].revents & POLLIN) {
+                // Inotify events are available.
+                if(handle_events(inotify_fd, wd))
+                    break;
+            }
+        }
+    }
+
+    printf("Listening for events stopped.\n");
+
+    /* Close inotify file descriptor. */
+    // TODO: implement "destructor" that closes inotify
+    //        close(inotify_fd);
+}
+
+void perf() {
+    LOG("Signalling perf (PID %d) to create snapshot\n", perf_pid);
+
+    kill(perf_pid, SIGUSR2);
+    wait_for_inotify_event();
+}
+
+void mycode::attest(CFICheckFailData *Data){
+    LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
+
+    LOG("CFI violation\n");
+    perf();
+    print_trace();
+    dump_core();
+
+    LOG("\033[1;33m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\033[0m\n");
+}
+
+
+void init_inotify() {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
         printf("Current working dir: %s\n", cwd);
@@ -182,16 +208,9 @@ void __attribute__ ((constructor)) premain()
         exit(EXIT_FAILURE);
     }
 
-    char buf;
-    int fd, i, poll_num;
-    int wd;
-    nfds_t nfds;
-    struct pollfd fds[2];
-
     /* Create the file descriptor for accessing the inotify API. */
-
-    fd = inotify_init1(IN_NONBLOCK);
-    if (fd == -1) {
+    inotify_fd = inotify_init1(IN_NONBLOCK);
+    if (inotify_fd == -1) {
         perror("inotify_init1");
         exit(EXIT_FAILURE);
     }
@@ -200,8 +219,7 @@ void __attribute__ ((constructor)) premain()
        - file was opened
        - file was closed
        - file was moved*/
-
-    wd = inotify_add_watch(fd, cwd,
+    wd = inotify_add_watch(inotify_fd, cwd,
             IN_OPEN | IN_CLOSE | IN_MOVE_SELF);
     if (wd == -1) {
         fprintf(stderr, "Cannot watch '%s': %s\n", cwd, strerror(errno));
@@ -209,15 +227,19 @@ void __attribute__ ((constructor)) premain()
     }
 
     /* Prepare for polling. */
+    poll_fd[0].fd = inotify_fd;
+    poll_fd[0].events = POLLIN;
+}
 
-    nfds = 2;
+void __attribute__ ((constructor)) premain()
+{
+    printf("In premain()\n");
 
-    fds[0].fd = STDIN_FILENO;       /* Console input */
-    fds[0].events = POLLIN;
+    LOG("Original pid: %d\n", getpid());
+    char* pid_string;
+    asprintf(&pid_string, "%d", getpid());
 
-    fds[1].fd = fd;                 /* Inotify input */
-    fds[1].events = POLLIN;
-
+    init_inotify();
 
     perf_pid = fork();
 
@@ -234,31 +256,9 @@ void __attribute__ ((constructor)) premain()
         exit(0);
     }
     else {
-        /* Wait for events and/or terminal input. */
-
-        printf("Listening for events.\n");
-        while (1) {
-            poll_num = poll(fds, nfds, -1);
-            if (poll_num == -1) {
-                if (errno == EINTR)
-                    continue;
-                perror("poll");
-                exit(EXIT_FAILURE);
-            }
-
-            if (poll_num > 0) {
-                if (fds[1].revents & POLLIN) {
-                    /* Inotify events are available. */
-                    if(handle_events(fd, wd))
-                        break;
-                }
-            }
-        }
-
-        printf("Listening for events stopped.\n");
-
-        /* Close inotify file descriptor. */
-        close(fd);
+        wait_for_inotify_event();
+        sleep(1);
     }
+    // ... continue to original code
 }
 
